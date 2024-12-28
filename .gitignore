@@ -25,6 +25,7 @@ dist-ssr
 
 # Python-generated files
 api/__pycache__/
+api/__pycache__/*
 api/*.py[oc]
 api/build/
 api/dist/
@@ -33,4 +34,9 @@ api/*.egg-info
 
 # Virtual environments
 api/.vnv/*
+api/.venv/*
+api/venv/*
 api/.env
+api/utils/__pycache__/
+api/utils/__pycache__/*
+api/history.json
