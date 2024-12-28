@@ -217,7 +217,7 @@ function App() {
         <header className="bg-[#1f1f1f] sticky w-full top-0">
           <div className="max-w-3xl mx-auto px-8 pt-6 pb-4">
             <h1 className="text-3xl font-bold text-white animate-fade-in">
-              <a href=""> Aana </a>
+              <a href="https://github.com/Adhishtanaka/aana."> Aana </a>
             </h1>
             <p className="text-gray-400 text-xs my-1 block ">made by <a className="text-blue-500" href="https://github.com/Adhishtanaka" target="_blank" >adhishtanaka</a></p>
           </div>

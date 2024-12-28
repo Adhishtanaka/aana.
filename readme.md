@@ -67,6 +67,24 @@ fastapi run index.py
 4. View related search results in the sidebar
 5. Click on search results to get AI-powered insights
 
+## Screenshots
+
+- **Searching and web scraping**
+
+![AANA Interface](./screenshot/webscrap.gif)
+
+- **Map Support**
+
+![AANA Interface](./screenshot/map.gif)
+
+- **pdf Support**
+
+![AANA Interface](./screenshot/pdf.gif)
+
+- **Video Support** 
+
+![AANA Interface](./screenshot/youtube.gif)
+
 
 ## License
 This project is open source and available under the [MIT License](LICENSE).
