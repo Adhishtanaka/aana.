@@ -17,9 +17,10 @@ AANA is a search engine that uses artificial intelligence to provide smart searc
 
 
 ## Requirements
-- Node.js (v14 or higher) with pnpm
+- Node.js (v14 or higher) with pnp or pnpm
 - Python 3.8 or higher
 - Google Gemini API key
+- Serper API key
 
 ## Installation
 
@@ -30,7 +31,7 @@ git clone https://github.com/Adhishtanaka/aana.
 cd aana
 
 # Install dependencies
-pnpm i
+pnpm i 
 
 # Start development server
 pnpm run dev
