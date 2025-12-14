@@ -115,6 +115,12 @@ function App() {
   };
 
   const change_url = (index: number) => {
+    // Add safety check to prevent invalid indices
+    const maxIndex = (searchInfo?.search_results?.organic?.length || 1) - 1;
+    if (index > maxIndex) {
+      index = 0;
+    }
+    
     setI(index);
     resetChat();
     if (!array.includes(index)) {
@@ -339,6 +345,15 @@ function App() {
                                 className="break-words whitespace-pre-wrap"
                                 {...props}
                               />
+                            ),
+                            iframe: ({ ...props }) => (
+                              <div className="my-4">
+                                <iframe
+                                  {...props}
+                                  className="w-full max-w-full"
+                                  style={{ aspectRatio: '16/9', minHeight: '315px' }}
+                                />
+                              </div>
                             ),
                           }}
                         >

@@ -66,6 +66,21 @@ async def delete_history():
     delete_conversations()
 
 
+def extract_video_id_from_url(url):
+    """Extract YouTube video ID from URL"""
+    import re
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)',
+        r'youtube\.com\/v\/([^&\n?#]+)',
+        r'youtube\.com\/.*[?&]v=([^&\n?#]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return ''
+
 def stream_response(markdown, query, url):
     template0 = """
     CONTEXT: {function_output}
@@ -92,46 +107,51 @@ def stream_response(markdown, query, url):
 
     template1 = """
     CONTEXT: {transcript}
+    VIDEO_ID: {video_id}
     VIDEO_URL: {url}
-    You are a helpful assistant. The context provided above is the transcript of a YouTube video from the provided URL. 
-    Follow ALL of the rules below to create an answer based on this context:
-    1. For general video queries (no specific question):
-       - Provide a brief description of the video
-       - Include the full video embed using iframe
-       - Add a download button below the video using the 9xbuddy URL
-    2. For specific questions about the video content:
-       - Analyze the transcript to find the relevant part
-       - Only provide the specific timestamped link(s) to the relevant section(s)
-       - Include a download option for the specific section
-    3. Always include:
-       - A clear description
-       - Source attribution as a clickable link
-       - Video download option using 9xbuddy
-    4. Do not include external links apart from YouTube and download links
-    5. Ensure the response is concise and directly addresses the query
+    QUERY: {query}
+    You are a helpful assistant. The context provided above is related to a YouTube video with the video ID and URL provided. 
+    Follow ALL of the rules below to create an answer:
+    1. ALWAYS include the video embed using iframe with the VIDEO_ID provided
+    2. If transcript is available:
+       - Provide a brief description based on the transcript
+       - Answer any specific questions about the video content
+    3. If transcript is NOT available (context mentions transcript retrieval issues):
+       - Acknowledge that transcript couldn't be retrieved
+       - Still show the video embed so users can watch it
+       - Explain that you cannot provide content details without transcript
+    4. Always include:
+       - Video embed iframe
+       - Download button using 9xbuddy
+       - Source attribution as clickable link
+    5. Use the exact VIDEO_ID provided to generate correct embed URLs
+    6. Keep response concise and helpful
 
-    EXAMPLE OUTPUT:
+    EXAMPLE OUTPUT FOR AVAILABLE TRANSCRIPT:
 
-    ## Video Overview
+    ## Video: Machine Learning Basics
     
-    This video explains the basics of machine learning algorithms and their applications in data science.
+    This video explains the fundamentals of machine learning algorithms and their practical applications.
 
-    <iframe width="540" height="315" src="https://www.youtube.com/embed/example" frameborder="0" allowfullscreen></iframe>
+    <iframe width="560" height="315" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
     ### Download Video
-    <ion-icon name="cloud-download-outline"></ion-icon> [Download Video](https://9xbuddy.com/process?url=https://www.youtube.com/watch?v=example)
+    [Download Video](https://9xbuddy.com/process?url=https://www.youtube.com/watch?v={video_id})
 
-    [Source: TechEdu Channel](https://www.youtube.com/c/techedu)
+    [Source: YouTube Video](https://www.youtube.com/watch?v={video_id})
 
-    For specific timestamp answer:
-    ## Video Answer
+    EXAMPLE OUTPUT FOR NO TRANSCRIPT:
+
+    ## YouTube Video
     
-    The gradient descent algorithm is explained as an optimization method that finds the minimum of a function by iteratively moving in the direction of steepest descent.
+    Unfortunately, a transcript could not be retrieved for this video as subtitles are not available. Please watch the video directly for content.
 
-    [Watch Explanation (12:30-12:45)](https://www.youtube.com/watch?v=example&t=750)
+    <iframe width="560" height="315" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-    ### Download This Section
-    <ion-icon name="cloud-download-outline"></ion-icon> [Download Video Section](https://9xbuddy.com/process?url=https://www.youtube.com/watch?v=example&t=750)
+    ### Download Video
+    [Download Video](https://9xbuddy.com/process?url=https://www.youtube.com/watch?v={video_id})
+
+    [Source: YouTube Video](https://www.youtube.com/watch?v={video_id})
 
     [Source: Introduction to Machine Learning - TechEdu](https://www.youtube.com/c/techedu)
     """
@@ -192,12 +212,49 @@ def stream_response(markdown, query, url):
     elif any(
         yt_domain in parsed.netloc.lower() for yt_domain in ["youtube.com", "youtu.be"]
     ):
-        prompt = template1.format(transcript=markdown, query=query, url=url)
+        if isinstance(markdown, dict):
+            if 'error' in markdown:
+                video_id = extract_video_id_from_url(markdown.get('url', url))
+                prompt = template1.format(
+                    transcript=f"Transcript Retrieval Status: Unfortunately, a transcript could not be retrieved for the video provided. This is most likely because subtitles are disabled for this video, as indicated in the context. Therefore, I cannot provide a description of the video's content or answer specific questions about it.",
+                    video_id=video_id,
+                    query=query, 
+                    url=markdown.get('url', url)
+                )
+            else:
+                transcript_text = markdown.get('transcript', '')
+                video_id = markdown.get('video_id', '')
+                prompt = template1.format(
+                    transcript=transcript_text, 
+                    video_id=video_id,
+                    query=query, 
+                    url=url
+                )
+        else:
+            prompt = template1.format(transcript=markdown, video_id='', query=query, url=url)
     else:
-        prompt = template2.format(markdown=markdown, query=query, url=url)
+        if "Access to this website is restricted" in str(markdown) and any(keyword in query.lower() for keyword in ["direction", "travel", "route", "way to", "how to get"]):
+            prompt = f"""
+            CONTEXT: {markdown}
+            QUERY: {query}
+            SOURCE_URL: {url}
+            
+            The user is asking for travel directions but the website is blocked. Provide helpful general guidance about travel between these locations based on the query, and suggest alternative resources.
+            
+            Include:
+            1. General information about the locations mentioned
+            2. Common transportation methods for this region
+            3. Suggest visiting the blocked website directly
+            4. Recommend alternative direction services (Google Maps, etc.)
+            5. Include the source link for direct access
+            
+            Format the response in Markdown with clear sections.
+            """
+        else:
+            prompt = template2.format(markdown=markdown, query=query, url=url)
 
     chat_completion = client.models.generate_content_stream(
-        model="gemini-2.0-flash-exp", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     for chunk in chat_completion:
         yield "0:{text}\n".format(text=json.dumps(chunk.text))
@@ -218,22 +275,42 @@ async def handle_chat_data(request: Request, index):
 
     elif len(messages) == 1 and search_results != {}:
         links = [item["link"] for item in search_results["organic"]]
+        # Add bounds checking to prevent index out of range
+        if index >= len(links):
+            index = 0
         url = links[index]
         context = await search_again(url)
-        context += f"\n\nUSER QUESTION: {last_message}\n"
-        print("Case 2: Visiting new unvisited page")
+        # Handle different context types
+        if isinstance(context, dict):
+            # For YouTube videos, don't append user question here as it's handled in template
+            pass
+        else:
+            context += f"\n\nUSER QUESTION: {last_message}\n"
+
 
     elif context == "" and len(messages) > 1:
         links = [item["link"] for item in search_results["organic"]]
+        # Add bounds checking to prevent index out of range
+        if index >= len(links):
+            index = 0
         url = links[index]
         context = await search_again(url)
-        context += f"\n\nUSER QUESTION: {last_message}\n"
-        print("Case 3: Revisiting previous page")
+        # Handle different context types
+        if isinstance(context, dict):
+            # For YouTube videos, don't append user question here as it's handled in template
+            pass
+        else:
+            context += f"\n\nUSER QUESTION: {last_message}\n"
+
 
     else:
         base_context = await search_again(url)
-        context = base_context + f"\n\nUSER QUESTION: {last_message}\n"
-        print("Case 4: New question on current page")
+        # Handle different context types
+        if isinstance(base_context, dict):
+            context = base_context  # For YouTube videos, don't append user question here
+        else:
+            context = base_context + f"\n\nUSER QUESTION: {last_message}\n"
+
 
     store_conversation(created_time, first_message, url)
     response = StreamingResponse(stream_response(context, last_message, url))

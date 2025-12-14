@@ -4,6 +4,8 @@ import json
 import aiohttp
 import requests
 import html2text
+import random
+import asyncio
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from async_lru import alru_cache
@@ -22,10 +24,44 @@ unnecessary_patterns = r"""
     |slider|lightbox|tooltip|dropdown|skeleton|placeholder|loading|shimmer|spinner
 """
 
-header2 = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
-    "Referer": "https://www.google.lk",
+import random
+
+# Rotate user agents to avoid detection
+user_agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+]
+
+def get_random_headers():
+    """Generate random headers to avoid bot detection"""
+    return {
+        "User-Agent": random.choice(user_agents),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
+    }
+
+header2 = get_random_headers()
+
+# Wikipedia-compliant headers following Wikimedia Foundation User-Agent Policy
+wikipedia_headers = {
+    "User-Agent": "AANA-SearchBot/1.0 (https://github.com/Adhishtanaka/aana; aana-search@example.com) aiohttp/3.11.11",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 youtube_url_pattern = (
@@ -42,15 +78,118 @@ def search_web(query):
     header1 = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
     response = requests.post(url, headers=header1, data=payload)
     results = response.json()
+    
     links = [item["link"] for item in results["organic"]]
     return links, results
 
 
 async def get_html(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=header2) as response:
-            html = await response.text()
-            return get_markdown(html, url)
+    domain = urlparse(url).netloc.lower()
+    
+    problematic_domains = ['x.com', 'twitter.com', 'facebook.com', 'instagram.com']
+    
+    wikipedia_domains = ['wikipedia.org', 'wikimedia.org', 'wikidata.org', 'wikisource.org', 
+                        'wiktionary.org', 'wikinews.org', 'wikiquote.org', 'wikibooks.org',
+                        'wikiversity.org', 'wikivoyage.org', 'wikispecies.org']
+    
+    if any(wiki_domain in domain for wiki_domain in wikipedia_domains):
+        headers_to_use = wikipedia_headers
+        # For Wikipedia articles, try to use REST API for better performance
+        if 'wikipedia.org' in domain and '/wiki/' in url:
+            rest_api_url = convert_wikipedia_to_rest_api(url)
+            if rest_api_url != url:
+                url = rest_api_url
+    else:
+        # Use random headers for non-Wikipedia sites to avoid detection
+        headers_to_use = get_random_headers()
+    
+    if any(prob_domain in domain for prob_domain in problematic_domains):
+        return await get_html_fallback(url, headers_to_use)
+    
+    # Add random delay to avoid rate limiting
+    await asyncio.sleep(random.uniform(0.5, 2.0))
+    
+    connector = aiohttp.TCPConnector(
+        limit=100,
+        limit_per_host=30,
+        ttl_dns_cache=300,
+        use_dns_cache=True,
+    )
+    
+    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+    
+    try:
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            connector_owner=True,
+        ) as session:
+            async with session.get(
+                url, 
+                headers=headers_to_use,
+                allow_redirects=True,
+                max_redirects=10,
+            ) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    return get_markdown(html, url)
+                else:
+                    print(f"HTTP {response.status} error for URL: {url}")
+                    if response.status == 403:
+                        return f"Access to this website is restricted. The site may be blocking automated requests. Please visit the link directly: {url}"
+                    else:
+                        return f"Error: Unable to fetch content (HTTP {response.status}). Please visit the link directly: {url}"
+                    
+    except aiohttp.ClientResponseError as e:
+        if "Header value is too long" in str(e) or "Got more than" in str(e):
+            print(f"Header size error for {url}, using fallback method...")
+            return await get_html_fallback(url, headers_to_use)
+        else:
+            print(f"Client response error for {url}: {e}")
+            return f"Error: {str(e)}"
+    except Exception as e:
+        print(f"Unexpected error for {url}: {e}")
+        return await get_html_fallback(url, headers_to_use)
+
+
+def convert_wikipedia_to_rest_api(url):
+    """Convert Wikipedia article URL to REST API endpoint for better performance"""
+    try:
+        parsed = urlparse(url)
+        if 'wikipedia.org' in parsed.netloc:
+            path_parts = parsed.path.split('/')
+            if len(path_parts) >= 3 and path_parts[1] == 'wiki':
+                article_title = path_parts[2]
+                rest_url = f"https://{parsed.netloc}/api/rest_v1/page/html/{article_title}"
+                return rest_url
+    except Exception as e:
+        print(f"Could not convert Wikipedia URL to REST API: {e}")
+    return url
+
+async def get_html_fallback(url, headers=None):
+    """Fallback method using requests for problematic URLs"""
+    if headers is None:
+        headers = header2
+        
+    try:
+        import requests
+        response = requests.get(
+            url, 
+            headers=headers, 
+            timeout=30,
+            allow_redirects=True,
+            stream=False
+        )
+        if response.status_code == 200:
+            return get_markdown(response.text, url)
+        else:
+            if response.status_code == 403:
+                return f"Access to this website is restricted. The site may be blocking automated requests. Please visit the link directly: {url}"
+            else:
+                return f"Error: Unable to fetch content (HTTP {response.status_code}). Please visit the link directly: {url}"
+    except Exception as e:
+        print(f"Fallback method also failed for {url}: {e}")
+        return f"Error: Unable to fetch content - {str(e)}"
 
 
 def get_markdown(content, url):
@@ -96,6 +235,7 @@ def get_markdown(content, url):
 @alru_cache(maxsize=20)
 async def search(query, index):
     links, results = search_web(query)
+    
     url = links[index]
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
@@ -133,17 +273,35 @@ async def search_again(url):
         return markdown
 
 
+def extract_video_id(url):
+    """Extract YouTube video ID from various URL formats"""
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)',
+        r'youtube\.com\/v\/([^&\n?#]+)',
+        r'youtube\.com\/user\/[^\/]+#[^\/]*\/[^\/]*\/[^\/]*\/([^&\n?#]+)',
+        r'youtube\.com\/.*[?&]v=([^&\n?#]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 def get_transcript(url):
     try:
-        match = re.match(youtube_url_pattern, url)
-        if match:
-            video_id = match.group(7)
+        video_id = extract_video_id(url)
+        if video_id:
             srt = YouTubeTranscriptApi.get_transcript(video_id)
-            return srt
+            return {
+                'transcript': srt,
+                'video_id': video_id,
+                'url': url
+            }
         else:
-            return None
+            return {"error": "Could not extract video ID from URL", "url": url}
     except Exception as e:
-        return f"{e}"
+        return {"error": str(e), "url": url}
 
 
 def get_file(url):
