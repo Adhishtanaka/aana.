@@ -27,7 +27,7 @@ AANA is a search engine that uses artificial intelligence to provide smart searc
 ### Frontend Setup
 ```bash
 # Clone repository
-git clone https://github.com/Adhishtanaka/aana.
+git clone https://github.com/Adhishtanaka/aana. aana
 cd aana
 
 # Install dependencies
@@ -61,9 +61,34 @@ pip install -r requirements.txt
 # Start server
 fastapi run index.py
 ```
+## Docker Deployment (Recommended)
+```bash
+# Production deployment
+docker-compose up -d
+
+# Development with hot reload
+docker-compose -f docker-compose.dev.yml up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+### Available Services
+- **Frontend**: http://localhost:3000 (production) or http://localhost:5173 (development)
+- **Backend API**: http://localhost:8000
+
+For detailed Docker setup instructions, see [DOCKER.md](DOCKER.md).
+
+## Manual Installation
+
+If you prefer to run without Docker:
+
 ## Usage
-1. Start both frontend and backend servers
-2. Open http://localhost:5173/ in your browser
+1. Start both frontend and backend servers (or use Docker)
+2. Open http://localhost:5173/ (or http://localhost:3000 for Docker) in your browser
 3. Enter your question in the chat input
 4. View related search results in the sidebar
 5. Click on search results to get AI-powered insights
