@@ -17,8 +17,9 @@ AANA is a search engine that uses artificial intelligence to provide smart searc
 
 
 ## Requirements
-- Node.js (v14 or higher) with pnp or pnpm
+- Node.js (v14 or higher) with npm or pnpm
 - Python 3.8 or higher
+- uv (recommended) or pip for Python package management
 - Google Gemini API key
 - Serper API key
 
@@ -45,50 +46,81 @@ The application requires environment variables to be set in a `.env` file:
 Gemini_API_KEY=your_gemini_api_key_here
 SERPER_API_KEY=your_serper_api_key_here
 ```
-then ,
 
+#### Option 1: Using uv (Recommended)
+```bash
+# Navigate to backend directory
+cd api
+
+# Install dependencies with uv (automatically creates virtual environment)
+uv sync
+
+# Start server
+uv run fastapi run index.py
+```
+
+#### Option 2: Using pip
 ```bash
 # Navigate to backend directory
 cd api
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies from pyproject.toml
+pip install -e .
 
 # Start server
 fastapi run index.py
-```
-## Docker Deployment (Recommended)
-```bash
-# Production deployment
-docker-compose up -d
-
-# Development with hot reload
-docker-compose -f docker-compose.dev.yml up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
 ```
 
 ### Available Services
 - **Frontend**: http://localhost:3000 (production) or http://localhost:5173 (development)
 - **Backend API**: http://localhost:8000
 
-For detailed Docker setup instructions, see [DOCKER.md](DOCKER.md).
+## Project Structure
 
-## Manual Installation
+```
+aana/
+├── src/                    # Frontend React application
+│   ├── components/         # Reusable UI components
+│   ├── hooks/             # Custom React hooks
+│   ├── services/          # API communication
+│   └── types/             # TypeScript definitions
+├── api/                   # Backend FastAPI application
+│   ├── utils/             # Backend utilities
+│   │   ├── qubecrawl.py   # Web scraping and content extraction
+│   │   └── serper_client.py # Serper API integration
+│   ├── pyproject.toml     # Python dependencies and project config
+│   └── index.py           # Main FastAPI application
+└── README.md              # This file
+```
 
-If you prefer to run without Docker:
+## Development Commands
+
+### Frontend
+```bash
+pnpm run dev      # Start development server
+pnpm run build    # Build for production
+pnpm run preview  # Preview production build
+pnpm run lint     # Run ESLint
+```
+
+### Backend
+```bash
+# With uv
+uv run fastapi dev index.py    # Development with auto-reload
+uv run fastapi run index.py    # Production mode
+
+# With pip
+fastapi dev index.py           # Development with auto-reload
+fastapi run index.py           # Production mode
+```
 
 ## Usage
-1. Start both frontend and backend servers (or use Docker)
-2. Open http://localhost:5173/ (or http://localhost:3000 for Docker) in your browser
+1. Start both frontend and backend servers 
+2. Open http://localhost:5173/ in your browser
 3. Enter your question in the chat input
 4. View related search results in the sidebar
 5. Click on search results to get AI-powered insights
