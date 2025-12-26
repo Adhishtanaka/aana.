@@ -60,16 +60,19 @@ async def check_url_accessibility(request: URLCheckRequest):
         
         if any(yt_domain in parsed.netloc.lower() for yt_domain in ["youtube.com", "youtu.be"]):
             result = await search_again(request.url)
-            print(f"YouTube URL check for {request.url}: {result}")
+
             if isinstance(result, dict):
-                if 'transcript' in result and result['transcript'] and result['transcript'].strip():
-                    print(f"Transcript found, length: {len(result['transcript'])}")
+                # Check transcript availability using the new structure
+                transcript_available = result.get('transcript_available', False)
+                has_transcript = result.get('transcript', '').strip() if result.get('transcript') else False
+                
+                if transcript_available and has_transcript:
                     return {"accessible": True, "reason": "YouTube video with transcript available"}
-                elif 'error' in result:
-                    print(f"Transcript error: {result['error']}")
-                    return {"accessible": False, "reason": f"YouTube video transcript not available: {result['error']}"}
-            print("No transcript data found")
-            return {"accessible": False, "reason": "YouTube video transcript not accessible"}
+                else:
+                    error_reason = result.get('error', 'No transcript available')
+                    return {"accessible": False, "reason": f"YouTube video transcript not available: {error_reason}"}
+            else:
+                return {"accessible": False, "reason": "YouTube video transcript not accessible"}
         
         result = await search_again(request.url)
         
@@ -114,16 +117,17 @@ def generate_response(markdown, query, url):
     2. If transcript is available:
        - Provide a brief description based on the transcript
        - Answer any specific questions about the video content
-    3. If transcript is NOT available (context mentions transcript retrieval issues):
-       - Acknowledge that transcript couldn't be retrieved
+    3. If transcript is NOT available:
+       - Acknowledge that transcript isn't available in a friendly way
        - Still show the video embed so users can watch it
-       - Explain that you cannot provide content details without transcript
+       - Provide general guidance about the topic if possible based on the query
+       - Suggest watching the video directly for specific content
     4. Always include:
-       - Video embed iframe using: <iframe width="560" height="315" src="https://www.youtube.com/embed/VIDEO_ID_HERE" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-       - Source attribution as clickable link: [Source: YouTube Video](https://www.youtube.com/watch?v=VIDEO_ID_HERE)
+       - Video embed iframe using: <iframe width="560" height="315" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+       - Source attribution as clickable link: [Source: YouTube Video](https://www.youtube.com/watch?v={video_id})
     5. Use the exact VIDEO_ID provided to generate correct embed URLs
-    6. Keep response concise and helpful
-    7. Replace VIDEO_ID_HERE with the actual video ID from the context
+    6. Keep response helpful and encouraging, not discouraging
+    7. Format response in clean Markdown with proper sections
     """
 
     template2 = """
@@ -176,21 +180,27 @@ def generate_response(markdown, query, url):
         yt_domain in parsed.netloc.lower() for yt_domain in ["youtube.com", "youtu.be"]
     ):
         if isinstance(markdown, dict):
-            if 'error' in markdown:
-                video_id = extract_video_id(markdown.get('url', url))
-                if not video_id:
-                    video_id = extract_video_id(url)
+            video_id = markdown.get('video_id', '') or extract_video_id(url)
+            
+            if 'error' in markdown or not markdown.get('transcript_available', False):
+                error_msg = markdown.get('error', 'No transcript available')
+                
+                if 'disabled' in error_msg.lower() or 'captions are disabled' in error_msg.lower():
+                    context_msg = f"This YouTube video doesn't have captions enabled. While I can't provide a transcript-based summary, I can still help you with general information about '{query}' and you can watch the video directly below."
+                elif 'private' in error_msg.lower() or 'unavailable' in error_msg.lower():
+                    context_msg = f"This video appears to be private or unavailable. However, I can provide general information about '{query}' if that would be helpful."
+                else:
+                    context_msg = f"This YouTube video doesn't have captions available. You can watch the video directly below, and I'm happy to help with general information about '{query}'."
+                
                 prompt = template1.format(
-                    transcript=f"Transcript Retrieval Status: Unfortunately, a transcript could not be retrieved for the video provided. This is most likely because subtitles are disabled for this video, as indicated in the context. Therefore, I cannot provide a description of the video's content or answer specific questions about it.",
+                    transcript=context_msg,
                     video_id=video_id,
                     query=query, 
-                    url=markdown.get('url', url)
+                    url=url
                 )
             else:
+                # Transcript is available
                 transcript_text = markdown.get('transcript', '')
-                video_id = markdown.get('video_id', '')
-                if not video_id:
-                    video_id = extract_video_id(url)
                 prompt = template1.format(
                     transcript=transcript_text, 
                     video_id=video_id,
@@ -198,6 +208,7 @@ def generate_response(markdown, query, url):
                     url=url
                 )
         else:
+            # Legacy string format
             video_id = extract_video_id(url)
             prompt = template1.format(transcript=markdown, video_id=video_id, query=query, url=url)
     else:

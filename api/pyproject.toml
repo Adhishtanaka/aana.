@@ -2,8 +2,7 @@
 name = "aana-api"
 version = "0.1.0"
 description = "AANA - AI-Powered Search Engine Backend API"
-readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "aiohappyeyeballs==2.4.4",
     "aiohttp==3.11.11",
@@ -64,7 +63,7 @@ dependencies = [
     "watchfiles==1.0.3",
     "websockets==14.1",
     "yarl==1.18.3",
-    "youtube-transcript-api==0.6.3"
+    "yt-dlp==2024.12.23",
 ]
 
 [build-system]

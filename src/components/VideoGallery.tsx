@@ -1,6 +1,8 @@
 
+import { useState, useEffect } from 'react';
 import { VideoResult } from '../types/search';
 import { RiPlayFill, RiExternalLinkLine, RiRobot2Fill } from 'react-icons/ri';
+import { SearchAPI } from '../services/searchApi';
 
 interface VideoGalleryProps {
   videos: VideoResult[];
@@ -8,6 +10,8 @@ interface VideoGalleryProps {
 }
 
 const VideoGallery: React.FC<VideoGalleryProps> = ({ videos, onChatWithUrl }) => {
+  const [videoAccessibility, setVideoAccessibility] = useState<Record<string, { accessible: boolean; reason: string; checked: boolean }>>({});
+
   if (videos.length === 0) {
     return (
       <div className="text-center py-12">
@@ -19,6 +23,31 @@ const VideoGallery: React.FC<VideoGalleryProps> = ({ videos, onChatWithUrl }) =>
   const isYouTubeVideo = (url: string) => {
     return url.includes('youtube.com') || url.includes('youtu.be');
   };
+
+  useEffect(() => {
+    const checkVideoAccessibility = async () => {
+      const youtubeVideos = videos.filter(video => isYouTubeVideo(video.link));
+      
+      for (const video of youtubeVideos) {
+        if (!videoAccessibility[video.link]?.checked) {
+          try {
+            const result = await SearchAPI.checkUrlAccessibility(video.link);
+            setVideoAccessibility(prev => ({
+              ...prev,
+              [video.link]: { ...result, checked: true }
+            }));
+          } catch (error) {
+            setVideoAccessibility(prev => ({
+              ...prev,
+              [video.link]: { accessible: false, reason: 'Failed to check', checked: true }
+            }));
+          }
+        }
+      }
+    };
+
+    checkVideoAccessibility();
+  }, [videos, videoAccessibility]);
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -71,7 +100,7 @@ const VideoGallery: React.FC<VideoGalleryProps> = ({ videos, onChatWithUrl }) =>
                 <RiExternalLinkLine size={14} />
               </a>
               
-              {isYouTubeVideo(video.link) && onChatWithUrl && (
+              {isYouTubeVideo(video.link) && onChatWithUrl && videoAccessibility[video.link]?.accessible && (
                 <button
                   onClick={() => onChatWithUrl(video.link)}
                   className="flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs"
@@ -79,6 +108,12 @@ const VideoGallery: React.FC<VideoGalleryProps> = ({ videos, onChatWithUrl }) =>
                   <RiRobot2Fill size={12} />
                   Chat about video
                 </button>
+              )}
+              
+              {isYouTubeVideo(video.link) && videoAccessibility[video.link]?.checked && !videoAccessibility[video.link]?.accessible && (
+                <span className="text-xs text-gray-400 italic">
+                  No transcript available
+                </span>
               )}
             </div>
           </div>

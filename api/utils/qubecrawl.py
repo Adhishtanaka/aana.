@@ -6,11 +6,13 @@ import requests
 import html2text
 import random
 import asyncio
+import time
+import tempfile
+import yt_dlp
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from async_lru import alru_cache
 from urllib.parse import urljoin, urlparse
-from youtube_transcript_api import YouTubeTranscriptApi
 
 load_dotenv()
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
@@ -293,22 +295,275 @@ def extract_video_id(url):
             return match.group(1)
     return '' 
 
+def get_transcript_with_yt_dlp(video_id, url):
+    try:
+        # Configure yt-dlp options for subtitle extraction
+        ydl_opts = {
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU'],
+            'subtitlesformat': 'json3',
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Extract video info including available subtitles
+            try:
+                info = ydl.extract_info(url, download=False)
+                
+                # Check if subtitles are available
+                subtitles = info.get('subtitles', {})
+                automatic_captions = info.get('automatic_captions', {})
+                
+                print(f"Available subtitles: {list(subtitles.keys())}")
+                print(f"Available automatic captions: {list(automatic_captions.keys())}")
+                
+                # Try to get English subtitles (prefer manual over auto-generated)
+                transcript_data = None
+                source_type = None
+                
+                # First try manual subtitles
+                for lang in ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']:
+                    if lang in subtitles:
+                        transcript_data = subtitles[lang]
+                        source_type = "manual"
+                        break
+                
+                # If no manual subtitles, try automatic captions
+                if not transcript_data:
+                    for lang in ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']:
+                        if lang in automatic_captions:
+                            print(f"Found automatic captions in {lang}")
+                            transcript_data = automatic_captions[lang]
+                            source_type = "automatic"
+                            break
+                
+                if not transcript_data:
+                    return {
+                        "error": "No English subtitles or captions available",
+                        "video_id": video_id,
+                        "url": url,
+                        "transcript_available": False
+                    }
+                
+                # Find the best format (prefer json3, then vtt, then srv1)
+                best_format = None
+                for fmt in transcript_data:
+                    if fmt.get('ext') == 'json3':
+                        best_format = fmt
+                        break
+                    elif fmt.get('ext') == 'vtt' and not best_format:
+                        best_format = fmt
+                    elif fmt.get('ext') == 'srv1' and not best_format:
+                        best_format = fmt
+                
+                if not best_format:
+                    return {
+                        "error": "No suitable subtitle format found",
+                        "video_id": video_id,
+                        "url": url,
+                        "transcript_available": False
+                    }
+                
+                # Download and parse the subtitle file
+                subtitle_url = best_format['url']
+                print(f"Downloading {source_type} subtitles from: {subtitle_url}")
+                
+                response = requests.get(subtitle_url, timeout=30)
+                response.raise_for_status()
+                
+                # Parse based on format
+                transcript_text = ""
+                if best_format.get('ext') == 'json3':
+                    transcript_text = parse_json3_subtitles(response.text)
+                elif best_format.get('ext') == 'vtt':
+                    transcript_text = parse_vtt_subtitles(response.text)
+                elif best_format.get('ext') == 'srv1':
+                    transcript_text = parse_srv1_subtitles(response.text)
+                
+                if transcript_text.strip():
+                    return {
+                        'transcript': transcript_text,
+                        'video_id': video_id,
+                        'url': url,
+                        'transcript_available': True,
+                        'source_type': source_type
+                    }
+                else:
+                    return {
+                        "error": "Transcript extracted but appears to be empty",
+                        "video_id": video_id,
+                        "url": url,
+                        "transcript_available": False
+                    }
+                    
+            except Exception as extract_error:
+                print(f"yt-dlp extraction failed: {extract_error}")
+                return {
+                    "error": f"Failed to extract video info: {str(extract_error)}",
+                    "video_id": video_id,
+                    "url": url,
+                    "transcript_available": False
+                }
+                
+    except Exception as e:
+        print(f"yt-dlp transcript extraction failed: {e}")
+        return {
+            "error": f"Transcript extraction failed: {str(e)}",
+            "video_id": video_id,
+            "url": url,
+            "transcript_available": False
+        }
+
+def parse_json3_subtitles(json_content):
+    try:
+        data = json.loads(json_content)
+        events = data.get('events', [])
+        
+        transcript_parts = []
+        for event in events:
+            if 'segs' in event:
+                for seg in event['segs']:
+                    if 'utf8' in seg:
+                        transcript_parts.append(seg['utf8'])
+        
+        return ' '.join(transcript_parts).strip()
+    except Exception as e:
+        print(f"Error parsing JSON3 subtitles: {e}")
+        return ""
+
+def parse_vtt_subtitles(vtt_content):
+    """Parse VTT format subtitles"""
+    try:
+        lines = vtt_content.split('\n')
+        transcript_parts = []
+        
+        for line in lines:
+            line = line.strip()
+            # Skip empty lines, WEBVTT header, and timestamp lines
+            if (line and 
+                not line.startswith('WEBVTT') and 
+                not line.startswith('NOTE') and
+                '-->' not in line and
+                not line.isdigit()):
+                # Remove HTML tags and add to transcript
+                clean_line = re.sub(r'<[^>]+>', '', line)
+                if clean_line:
+                    transcript_parts.append(clean_line)
+        
+        return ' '.join(transcript_parts).strip()
+    except Exception as e:
+        print(f"Error parsing VTT subtitles: {e}")
+        return ""
+
+def parse_srv1_subtitles(srv1_content):
+    try:
+        # SRV1 is XML format
+        from xml.etree import ElementTree as ET
+        root = ET.fromstring(srv1_content)
+        
+        transcript_parts = []
+        for text_elem in root.findall('.//text'):
+            if text_elem.text:
+                transcript_parts.append(text_elem.text.strip())
+        
+        return ' '.join(transcript_parts).strip()
+    except Exception as e:
+        print(f"Error parsing SRV1 subtitles: {e}")
+        return ""
+
+def get_transcript_with_retry(video_id, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                time.sleep(1 + attempt * 0.5) 
+            try:
+                return YouTubeTranscriptApi.get_transcript(video_id)
+            except Exception as e1:
+                for lang in ['en', 'en-US', 'en-GB']:
+                    try:
+                        return YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
+                    except:
+                        continue
+                
+                try:
+                    available_transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+                    for transcript in available_transcripts:
+                        if transcript.language_code.startswith('en'):
+                            try:
+                                return transcript.fetch()
+                            except:
+                                continue
+                except:
+                    pass
+
+                if attempt == max_retries - 1:
+                    raise e1
+                    
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"Attempt {attempt + 1} failed: {e}")
+    
+    return None
+
 def get_transcript(url):
     try:
         video_id = extract_video_id(url)
-        if video_id:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            transcript_text = ' '.join([item['text'] for item in transcript_list])
+        if not video_id:
             return {
-                'transcript': transcript_text,
-                'video_id': video_id,
-                'url': url,
-                'full_transcript': transcript_list  
+                "error": "Could not extract video ID from URL", 
+                "video_id": "", 
+                "url": url,
+                "transcript_available": False
             }
-        else:
-            return {"error": "Could not extract video ID from URL", "url": url}
+        
+        # Try yt-dlp first (more reliable)
+        result = get_transcript_with_yt_dlp(video_id, url)
+        
+        if result.get('transcript_available'):
+            return result
+        
+        print("yt-dlp failed, falling back to youtube-transcript-api")
+        
+        # Fallback to youtube-transcript-api if yt-dlp fails
+        try:
+            transcript_list = get_transcript_with_retry(video_id)
+            
+            if transcript_list and len(transcript_list) > 0:
+                transcript_text = ' '.join([item['text'] for item in transcript_list])
+                return {
+                    'transcript': transcript_text,
+                    'video_id': video_id,
+                    'url': url,
+                    'transcript_available': True,
+                    'source_type': 'fallback'
+                }
+            else:
+                return {
+                    "error": "Empty transcript received from fallback", 
+                    "video_id": video_id, 
+                    "url": url,
+                    "transcript_available": False
+                }
+                
+        except Exception as e:
+            error_msg = str(e).lower()
+            print(f"Both yt-dlp and fallback failed: {e}")
+            
+            # Return the yt-dlp error as it's usually more informative
+            return result
+        
     except Exception as e:
-        return {"error": str(e), "url": url}
+        print(f"Unexpected error in get_transcript: {e}")
+        return {
+            "error": str(e), 
+            "video_id": extract_video_id(url) or "", 
+            "url": url,
+            "transcript_available": False
+        }
 
 
 def get_file(url):
